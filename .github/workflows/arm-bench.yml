@@ -47,11 +47,17 @@ jobs:
             --ngl 0 --threads "$(nproc)" --grid 1,2,3,4 --workload code --n-predict 160 \
             --json bench_autotune.json
 
-      - name: Bench self-draft + cost ($/1M tok)
+      - name: Bench self-draft - MTP only ($/1M tok)
         run: |
           python3 selfdraft/sd.py bench models/gemma-4-12b-it-Q4_0.gguf \
-            --ngl 0 --threads "$(nproc)" --n-max 3 --workload code --n-predict 200 \
-            --price 0.0 --json bench_result.json
+            --ngl 0 --threads "$(nproc)" --n-max 3 --methods draft-mtp \
+            --workload code --n-predict 200 --price 0.0 --json bench_mtp.json
+
+      - name: Bench self-draft - MTP + n-gram cascade
+        run: |
+          python3 selfdraft/sd.py bench models/gemma-4-12b-it-Q4_0.gguf \
+            --ngl 0 --threads "$(nproc)" --n-max 3 --methods draft-mtp,ngram-mod \
+            --workload code --n-predict 200 --price 0.0 --json bench_cascade.json
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -59,4 +65,5 @@ jobs:
           name: arm64-bench-results
           path: |
             bench_autotune.json
-            bench_result.json
+            bench_mtp.json
+            bench_cascade.json

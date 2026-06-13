@@ -46,11 +46,14 @@ def resolve_mtp(model_path, explicit=None):
 
 class Server:
     def __init__(self, binary, model, port=8099, ngl=99, threads=None, ctx=4096,
-                 mtp=None, n_max=None, p_min=0.0, backend_sampling=True):
+                 mtp=None, n_max=None, p_min=0.0, backend_sampling=True, spec_type=None):
         self.binary, self.model, self.port = binary, model, port
         self.ngl, self.threads, self.ctx = ngl, threads, ctx
         self.mtp, self.n_max, self.p_min = mtp, n_max, p_min
         self.backend_sampling = backend_sampling
+        # speculation method(s): None = vanilla; "draft-mtp" (default when mtp set);
+        # comma list e.g. "draft-mtp,ngram-mod" runs a cascade.
+        self.spec_type = spec_type
         self.proc = None
 
     def cmd(self):
@@ -58,13 +61,18 @@ class Server:
              "--port", str(self.port), "--host", "127.0.0.1"]
         if self.threads:
             c += ["-t", str(self.threads)]
-        if self.mtp:
-            c += ["-md", self.mtp, "--spec-type", "draft-mtp",
-                  "--spec-draft-ngl", str(self.ngl), "--spec-draft-p-min", str(self.p_min)]
-            if self.n_max is not None:
-                c += ["--spec-draft-n-max", str(self.n_max)]
-            if not self.backend_sampling:
-                c += ["--no-spec-draft-backend-sampling"]
+        spec = self.spec_type or ("draft-mtp" if self.mtp else None)
+        if spec:
+            c += ["--spec-type", spec]
+            # draft-model methods (draft-mtp / draft-eagle3) need the head + draft flags;
+            # ngram-* methods draft from context and need neither.
+            if self.mtp and ("draft-mtp" in spec or "draft-eagle3" in spec):
+                c += ["-md", self.mtp, "--spec-draft-ngl", str(self.ngl),
+                      "--spec-draft-p-min", str(self.p_min)]
+                if self.n_max is not None:
+                    c += ["--spec-draft-n-max", str(self.n_max)]
+                if not self.backend_sampling:
+                    c += ["--no-spec-draft-backend-sampling"]
         return c
 
     def __enter__(self):
@@ -152,7 +160,7 @@ def do_bench(args):
     vm = gen_metrics(v)
 
     with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads,
-                ctx=args.ctx, mtp=mtp, n_max=args.n_max, p_min=args.p_min) as s:
+                ctx=args.ctx, mtp=mtp, n_max=args.n_max, p_min=args.p_min, spec_type=args.methods) as s:
         d = s.complete(prompt, args.n_predict)
     dm = gen_metrics(d)
 
@@ -193,7 +201,7 @@ def do_autotune(args):
     rows, best = [], None
     for nm in grid:
         with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads,
-                    ctx=args.ctx, mtp=mtp, n_max=nm, p_min=args.p_min) as s:
+                    ctx=args.ctx, mtp=mtp, n_max=nm, p_min=args.p_min, spec_type=args.methods) as s:
             m = gen_metrics(s.complete(prompt, args.n_predict))
         sp = m["tok_s"] / vm["tok_s"]
         rows.append((nm, m["tok_s"], sp, m.get("accept_pct", 0)))
@@ -210,7 +218,7 @@ def do_run(args):
     binary = find_server()
     mtp = resolve_mtp(args.model, args.mtp)
     cmd = Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads,
-                 ctx=args.ctx, mtp=mtp, n_max=args.n_max, p_min=args.p_min).cmd()
+                 ctx=args.ctx, mtp=mtp, n_max=args.n_max, p_min=args.p_min, spec_type=args.methods).cmd()
     print("[self-draft] launching:\n  " + " ".join(cmd))
     os.execv(binary, cmd)
 
@@ -222,7 +230,7 @@ def do_agent(args):
     with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads, ctx=args.ctx):
         v = run_agent(args.port, verbose=args.verbose)
     with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads, ctx=args.ctx,
-                mtp=mtp, n_max=args.n_max, p_min=args.p_min):
+                mtp=mtp, n_max=args.n_max, p_min=args.p_min, spec_type=args.methods):
         d = run_agent(args.port, verbose=args.verbose)
     print("\n============ agent loop (ReAct + calculator tool) ============")
     print(f"vanilla    : {v['wall_ms']/1000:6.2f}s  steps={v['steps']} tokens={v['tokens']} answer={v['answer']} correct={v['correct']}")
@@ -246,6 +254,8 @@ def main():
         p.add_argument("--ctx", type=int, default=4096)
         p.add_argument("--port", type=int, default=8099)
         p.add_argument("--p-min", type=float, default=0.0)
+        p.add_argument("--methods", default="draft-mtp",
+                       help="speculation method(s): draft-mtp | ngram-mod | 'draft-mtp,ngram-mod' (cascade, usually fastest)")
         p.add_argument("--workload", default="code", help="'code', 'prose', or a literal prompt string")
         p.add_argument("--n-predict", type=int, default=200)
         p.add_argument("--price", type=float, default=0.0, help="instance price $/hr (e.g. c7g.xlarge ~0.145) -> reports $/1M tokens")
