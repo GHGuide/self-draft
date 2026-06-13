@@ -68,8 +68,8 @@ class Server:
         return c
 
     def __enter__(self):
-        self.log = open(os.path.join(ROOT, "bench", f"server_{self.port}.log"), "w")
         os.makedirs(os.path.join(ROOT, "bench"), exist_ok=True)
+        self.log = open(os.path.join(ROOT, "bench", f"server_{self.port}.log"), "w")
         self.proc = subprocess.Popen(self.cmd(), stdout=self.log, stderr=subprocess.STDOUT,
                                      preexec_fn=os.setsid)
         # wait for /health
