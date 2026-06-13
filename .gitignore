@@ -1,0 +1,11 @@
+# heavy artifacts — never commit
+models/
+llama.cpp/
+bench/
+__pycache__/
+*.pyc
+.DS_Store
+# internal hackathon strategy/log — keep out of public repo
+BRIEF.md
+CLAUDE.md
+PROGRESS.md
