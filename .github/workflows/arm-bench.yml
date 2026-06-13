@@ -6,6 +6,11 @@ on:
   workflow_dispatch: {}        # run manually from the Actions tab
   push:
     branches: [ main ]
+    paths-ignore:              # don't re-run the expensive bench on docs-only changes
+      - '**.md'
+      - 'docs/**'
+      - 'results/**'
+      - 'patches/**'
 
 jobs:
   bench:
