@@ -109,5 +109,10 @@ Arm i8mm/dotprod. The autotuner adapts the draft length to the instance core cou
   UMA device is a `llama.cpp` dual-context slowdown (<1x, even for the tiny MTP head).
   Graviton (CPU) is unaffected - and is the contest target.
 
+## Engineering findings
+The rigorous path to these numbers (why a same-size Q2 draft fails, why draft length is
+decisive, the floating-point equivalence analysis, the Metal/UMA issue) is written up in
+[docs/FINDINGS.md](docs/FINDINGS.md).
+
 ## License
 Apache 2.0 - see [LICENSE](LICENSE).
