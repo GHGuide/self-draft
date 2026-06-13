@@ -31,6 +31,13 @@ def find_server():
         return p
     sys.exit("ERROR: llama-server not found. Build llama.cpp first (see README).")
 
+def pick_draft(args):
+    """Draft model path: explicit --draft-model wins (e.g. a derived self-draft gguf),
+    else auto-resolve an mtp-*.gguf sibling."""
+    if getattr(args, "draft_model", None):
+        return args.draft_model
+    return resolve_mtp(args.model, args.mtp)
+
 def resolve_mtp(model_path, explicit=None):
     """Find the MTP sibling for a target gguf. unsloth convention: mtp-<stem>.gguf"""
     if explicit:
@@ -64,9 +71,9 @@ class Server:
         spec = self.spec_type or ("draft-mtp" if self.mtp else None)
         if spec:
             c += ["--spec-type", spec]
-            # draft-model methods (draft-mtp / draft-eagle3) need the head + draft flags;
-            # ngram-* methods draft from context and need neither.
-            if self.mtp and ("draft-mtp" in spec or "draft-eagle3" in spec):
+            # draft-model methods (draft-*: mtp / eagle3 / simple) need the draft model +
+            # draft flags; ngram-* methods draft from context and need neither.
+            if self.mtp and "draft-" in spec:
                 c += ["-md", self.mtp, "--spec-draft-ngl", str(self.ngl),
                       "--spec-draft-p-min", str(self.p_min)]
                 if self.n_max is not None:
@@ -149,7 +156,7 @@ def equivalence(a, b):
 
 def do_bench(args):
     binary = find_server()
-    mtp = resolve_mtp(args.model, args.mtp)
+    mtp = pick_draft(args)
     prompt = PROMPTS.get(args.workload, args.workload)
     print(f"[self-draft] target={os.path.basename(args.model)} mtp={os.path.basename(mtp)} "
           f"ngl={args.ngl} n-max={args.n_max} workload={args.workload} n_predict={args.n_predict}")
@@ -190,7 +197,7 @@ def do_bench(args):
 
 def do_autotune(args):
     binary = find_server()
-    mtp = resolve_mtp(args.model, args.mtp)
+    mtp = pick_draft(args)
     prompt = PROMPTS.get(args.workload, args.workload)
     grid = [int(x) for x in args.grid.split(",")]
     print(f"[self-draft] autotune n-max over {grid} (workload={args.workload})")
@@ -216,7 +223,7 @@ def do_autotune(args):
 
 def do_run(args):
     binary = find_server()
-    mtp = resolve_mtp(args.model, args.mtp)
+    mtp = pick_draft(args)
     cmd = Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads,
                  ctx=args.ctx, mtp=mtp, n_max=args.n_max, p_min=args.p_min, spec_type=args.methods).cmd()
     print("[self-draft] launching:\n  " + " ".join(cmd))
@@ -225,7 +232,7 @@ def do_run(args):
 def do_agent(args):
     from agent_demo import run_agent
     binary = find_server()
-    mtp = resolve_mtp(args.model, args.mtp)
+    mtp = pick_draft(args)
     print(f"[self-draft] agent end-to-end latency: vanilla vs self-draft (n-max={args.n_max})")
     with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads, ctx=args.ctx):
         v = run_agent(args.port, verbose=args.verbose)
@@ -249,6 +256,7 @@ def main():
     def common(p):
         p.add_argument("model", help="path to target .gguf")
         p.add_argument("--mtp", help="explicit MTP draft .gguf (default: auto-resolve mtp-*.gguf sibling)")
+        p.add_argument("--draft-model", help="explicit draft .gguf (e.g. a derived self-draft); overrides MTP auto-resolve")
         p.add_argument("--ngl", type=int, default=99, help="GPU layers (0 = CPU only; CPU avoids Metal dual-context bug)")
         p.add_argument("--threads", type=int, default=None)
         p.add_argument("--ctx", type=int, default=4096)
