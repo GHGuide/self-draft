@@ -38,6 +38,12 @@ def pick_draft(args):
         return args.draft_model
     return resolve_mtp(args.model, args.mtp)
 
+def perf_kwargs(args):
+    """Arm/CPU perf flags, applied to BOTH vanilla and self-draft servers for a fair ratio."""
+    return dict(fa=args.fa, ctk=args.ctk, ctv=args.ctv,
+                ctkd=getattr(args, "ctkd", None), ctvd=getattr(args, "ctvd", None),
+                mlock=args.mlock, poll=args.poll)
+
 def resolve_mtp(model_path, explicit=None):
     """Find the MTP sibling for a target gguf. unsloth convention: mtp-<stem>.gguf"""
     if explicit:
@@ -53,7 +59,8 @@ def resolve_mtp(model_path, explicit=None):
 
 class Server:
     def __init__(self, binary, model, port=8099, ngl=99, threads=None, ctx=4096,
-                 mtp=None, n_max=None, p_min=0.0, backend_sampling=True, spec_type=None):
+                 mtp=None, n_max=None, p_min=0.0, backend_sampling=True, spec_type=None,
+                 fa=None, ctk=None, ctv=None, ctkd=None, ctvd=None, mlock=False, poll=None):
         self.binary, self.model, self.port = binary, model, port
         self.ngl, self.threads, self.ctx = ngl, threads, ctx
         self.mtp, self.n_max, self.p_min = mtp, n_max, p_min
@@ -61,6 +68,12 @@ class Server:
         # speculation method(s): None = vanilla; "draft-mtp" (default when mtp set);
         # comma list e.g. "draft-mtp,ngram-mod" runs a cascade.
         self.spec_type = spec_type
+        # Arm/CPU perf knobs (memory-bound wins). fa: 'on'|'off'|'auto'. ctk/ctv: KV cache
+        # quant type (q8_0...) for TARGET (changes the lossless baseline -> hash both runs
+        # at the SAME setting). ctkd/ctvd: DRAFT KV quant (correctness-safe, only affects
+        # acceptance). -ctv requires -fa on. mlock: pin weights. poll: spin-wait.
+        self.fa, self.ctk, self.ctv = fa, ctk, ctv
+        self.ctkd, self.ctvd, self.mlock, self.poll = ctkd, ctvd, mlock, poll
         self.proc = None
 
     def cmd(self):
@@ -68,6 +81,11 @@ class Server:
              "--port", str(self.port), "--host", "127.0.0.1"]
         if self.threads:
             c += ["-t", str(self.threads)]
+        if self.fa:    c += ["-fa", self.fa]
+        if self.ctk:   c += ["-ctk", self.ctk]
+        if self.ctv:   c += ["-ctv", self.ctv]   # requires -fa on
+        if self.mlock: c += ["--mlock", "--no-mmap"]
+        if self.poll is not None: c += ["--poll", str(self.poll)]
         spec = self.spec_type or ("draft-mtp" if self.mtp else None)
         if spec:
             c += ["--spec-type", spec]
@@ -80,6 +98,8 @@ class Server:
                     c += ["--spec-draft-n-max", str(self.n_max)]
                 if not self.backend_sampling:
                     c += ["--no-spec-draft-backend-sampling"]
+                if self.ctkd: c += ["-ctkd", self.ctkd]   # draft KV quant: correctness-safe
+                if self.ctvd: c += ["-ctvd", self.ctvd]
         return c
 
     def __enter__(self):
@@ -162,12 +182,12 @@ def do_bench(args):
           f"ngl={args.ngl} n-max={args.n_max} workload={args.workload} n_predict={args.n_predict}")
 
     with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads,
-                ctx=args.ctx) as s:
+                ctx=args.ctx, **perf_kwargs(args)) as s:
         v = s.complete(prompt, args.n_predict)
     vm = gen_metrics(v)
 
     with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads,
-                ctx=args.ctx, mtp=mtp, n_max=args.n_max, p_min=args.p_min, spec_type=args.methods) as s:
+                ctx=args.ctx, mtp=mtp, n_max=args.n_max, p_min=args.p_min, spec_type=args.methods, **perf_kwargs(args)) as s:
         d = s.complete(prompt, args.n_predict)
     dm = gen_metrics(d)
 
@@ -202,13 +222,13 @@ def do_autotune(args):
     grid = [int(x) for x in args.grid.split(",")]
     print(f"[self-draft] autotune n-max over {grid} (workload={args.workload})")
     # vanilla baseline
-    with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads, ctx=args.ctx) as s:
+    with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads, ctx=args.ctx, **perf_kwargs(args)) as s:
         vm = gen_metrics(s.complete(prompt, args.n_predict))
     print(f"vanilla: {vm['tok_s']:.2f} tok/s")
     rows, best = [], None
     for nm in grid:
         with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads,
-                    ctx=args.ctx, mtp=mtp, n_max=nm, p_min=args.p_min, spec_type=args.methods) as s:
+                    ctx=args.ctx, mtp=mtp, n_max=nm, p_min=args.p_min, spec_type=args.methods, **perf_kwargs(args)) as s:
             m = gen_metrics(s.complete(prompt, args.n_predict))
         sp = m["tok_s"] / vm["tok_s"]
         rows.append((nm, m["tok_s"], sp, m.get("accept_pct", 0)))
@@ -225,7 +245,7 @@ def do_run(args):
     binary = find_server()
     mtp = pick_draft(args)
     cmd = Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads,
-                 ctx=args.ctx, mtp=mtp, n_max=args.n_max, p_min=args.p_min, spec_type=args.methods).cmd()
+                 ctx=args.ctx, mtp=mtp, n_max=args.n_max, p_min=args.p_min, spec_type=args.methods, **perf_kwargs(args)).cmd()
     print("[self-draft] launching:\n  " + " ".join(cmd))
     os.execv(binary, cmd)
 
@@ -234,10 +254,10 @@ def do_agent(args):
     binary = find_server()
     mtp = pick_draft(args)
     print(f"[self-draft] agent end-to-end latency: vanilla vs self-draft (n-max={args.n_max})")
-    with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads, ctx=args.ctx):
+    with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads, ctx=args.ctx, **perf_kwargs(args)):
         v = run_agent(args.port, verbose=args.verbose)
     with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads, ctx=args.ctx,
-                mtp=mtp, n_max=args.n_max, p_min=args.p_min, spec_type=args.methods):
+                mtp=mtp, n_max=args.n_max, p_min=args.p_min, spec_type=args.methods, **perf_kwargs(args)):
         d = run_agent(args.port, verbose=args.verbose)
     print("\n============ agent loop (ReAct + calculator tool) ============")
     print(f"vanilla    : {v['wall_ms']/1000:6.2f}s  steps={v['steps']} tokens={v['tokens']} answer={v['answer']} correct={v['correct']}")
@@ -264,6 +284,14 @@ def main():
         p.add_argument("--p-min", type=float, default=0.0)
         p.add_argument("--methods", default="draft-mtp",
                        help="speculation method(s): draft-mtp | ngram-mod | 'draft-mtp,ngram-mod' (cascade, usually fastest)")
+        # Arm/CPU perf knobs (applied to BOTH vanilla and self-draft for a fair ratio)
+        p.add_argument("--fa", choices=["on", "off", "auto"], help="flash attention (set 'on' for CPU; required for -ctv)")
+        p.add_argument("--ctk", help="target KV-cache K quant (e.g. q8_0). Changes lossless baseline; hash both runs at same setting")
+        p.add_argument("--ctv", help="target KV-cache V quant (e.g. q8_0). Requires --fa on")
+        p.add_argument("--ctkd", help="DRAFT KV-cache K quant (correctness-safe; only affects acceptance)")
+        p.add_argument("--ctvd", help="DRAFT KV-cache V quant (correctness-safe)")
+        p.add_argument("--mlock", action="store_true", help="pin weights (--mlock --no-mmap): lower tail latency")
+        p.add_argument("--poll", type=int, help="busy-poll wait (e.g. 50): cut per-token wakeup latency")
         p.add_argument("--workload", default="code", help="'code', 'prose', or a literal prompt string")
         p.add_argument("--n-predict", type=int, default=200)
         p.add_argument("--price", type=float, default=0.0, help="instance price $/hr (e.g. c7g.xlarge ~0.145) -> reports $/1M tokens")

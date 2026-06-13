@@ -41,6 +41,14 @@ jobs:
           curl -fL -o models/mtp-gemma-4-12b-it.gguf  "$base/mtp-gemma-4-12b-it.gguf"
           ls -lh models
 
+      - name: Confirm Arm acceleration is live (KleidiAI / i8mm / SVE / repack)
+        run: |
+          # informational: prove the Arm quantized-matmul path is actually engaged
+          (./llama.cpp/build/bin/llama-server -m models/gemma-4-12b-it-Q4_0.gguf -ngl 0 -c 256 --port 8090 --host 127.0.0.1 >feat.log 2>&1 &) ; sleep 25
+          echo "--- Arm CPU features / KleidiAI engagement ---"
+          grep -iE "kleidiai|i8mm|MATMUL_INT8|REPACK|SVE|NEON|system_info|CPU :" feat.log || echo "(feature lines not matched; see full log)"
+          pkill -f "llama-server.*8090" || true
+
       - name: Autotune draft length (Arm64 CPU)
         run: |
           python3 selfdraft/sd.py autotune models/gemma-4-12b-it-Q4_0.gguf \
@@ -53,11 +61,24 @@ jobs:
             --ngl 0 --threads "$(nproc)" --n-max 3 --methods draft-mtp \
             --workload code --n-predict 200 --price 0.0 --json bench_mtp.json
 
-      - name: Bench self-draft - MTP + n-gram cascade
+      - name: Bench self-draft - MTP + Arm perf (flash-attn + q8_0 KV cache + mlock)
         run: |
+          # both vanilla and self-draft run with the SAME perf flags -> fair ratio + fair
+          # lossless comparison (output is lossless relative to this KV-cache config).
           python3 selfdraft/sd.py bench models/gemma-4-12b-it-Q4_0.gguf \
-            --ngl 0 --threads "$(nproc)" --n-max 3 --methods draft-mtp,ngram-mod \
-            --workload code --n-predict 200 --price 0.0 --json bench_cascade.json
+            --ngl 0 --threads "$(nproc)" --n-max 3 --methods draft-mtp \
+            --fa on --ctk q8_0 --ctv q8_0 --ctkd q8_0 --ctvd q8_0 --mlock \
+            --ctx 4096 --workload code --n-predict 256 --price 0.0 --json bench_perf.json
+
+      - name: Summarize MTP-baseline vs MTP+perf
+        run: |
+          python3 - <<'PY'
+          import json
+          b=json.load(open("bench_mtp.json")); p=json.load(open("bench_perf.json"))
+          print(f"MTP baseline : self {b['self_draft']['tok_s']:.2f} tok/s, {b['speedup']:.2f}x")
+          print(f"MTP + perf   : self {p['self_draft']['tok_s']:.2f} tok/s, {p['speedup']:.2f}x")
+          print(f"perf delta on self-draft tok/s: {(p['self_draft']['tok_s']/b['self_draft']['tok_s']-1)*100:+.1f}%")
+          PY
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -66,4 +87,4 @@ jobs:
           path: |
             bench_autotune.json
             bench_mtp.json
-            bench_cascade.json
+            bench_perf.json
