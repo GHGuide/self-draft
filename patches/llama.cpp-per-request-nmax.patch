@@ -1,0 +1,65 @@
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index d874315..0c56caa 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -1124,7 +1124,10 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
+ 
+                 result.push_back(id);
+ 
+-                if (params.n_max <= (int) result.size()) {
++                // stop at the tighter of the launch n_max and the per-call ceiling
++                // (dp.n_max carries any per-request adaptive n-max; -1 = unset).
++                const int n_max_eff = dp.n_max >= 0 ? std::min(params.n_max, dp.n_max) : params.n_max;
++                if (n_max_eff <= (int) result.size()) {
+                     drafting[seq_id] = false;
+                     n_drafting--;
+                     continue;
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 95a2a6e..dd3698a 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -343,6 +343,13 @@ struct server_slot {
+             n_draft_max = std::min(n_draft_max, n_remaining - 1);
+         }
+ 
++        // self-draft: honor a per-request draft length (adaptive n-max). The drafting
++        // impl stops at min(launch n_max, this ceiling), so a request can shrink the
++        // draft below the launch value online without restarting the server.
++        if (task->params.speculative.draft.n_max > 0) {
++            n_draft_max = std::min(n_draft_max, task->params.speculative.draft.n_max);
++        }
++
+         SLT_DBG(*this, "max possible draft: %d\n", n_draft_max);
+ 
+         return n_draft_max;
+diff --git a/tools/server/server-task.cpp b/tools/server/server-task.cpp
+index 72a4bd0..b649678 100644
+--- a/tools/server/server-task.cpp
++++ b/tools/server/server-task.cpp
+@@ -307,18 +307,18 @@ task_params server_task::params_from_json_cmpl(
+ 
+     params.speculative = defaults.speculative;
+ 
+-    // TODO: to keep things simple, we disable speculative parameter adjustments for now
+-#if 0
+-    // TODO: for now, be able to adjust only the draft-model based speculative parameters
+-    params.speculative.draft.n_min = json_value(data, "speculative.n_min", defaults.speculative.draft.n_min);
++    // self-draft: allow per-request adjustment of the draft-model speculative params
++    // (n_max / n_min / p_min) so a client can vary draft length online (adaptive n-max).
++    // Backward-compatible: a request that omits these keys is identical to before
++    // (json_value returns the launch-time default). Keys are flat, e.g. {"speculative.n_max": 6}.
+     params.speculative.draft.n_max = json_value(data, "speculative.n_max", defaults.speculative.draft.n_max);
++    params.speculative.draft.n_min = json_value(data, "speculative.n_min", defaults.speculative.draft.n_min);
+     params.speculative.draft.p_min = json_value(data, "speculative.p_min", defaults.speculative.draft.p_min);
+-
+-    params.speculative.draft.n_min = std::min(params.speculative.draft.n_max, params.speculative.draft.n_min);
+-    params.speculative.draft.n_min = std::max(params.speculative.draft.n_min, 0);
+     params.speculative.draft.n_max = std::max(params.speculative.draft.n_max, 0);
++    params.speculative.draft.n_min = std::max(std::min(params.speculative.draft.n_min, params.speculative.draft.n_max), 0);
+ 
+-    // for debugging and research purposes
++#if 0
++    // for debugging and research purposes (disabled: upstream ngram clamps are buggy)
+     params.speculative.type = common_speculative_type_from_name(json_value(data, "speculative.type", common_speculative_type_to_str(defaults.speculative.type)));
+ 
+     params.speculative.ngram_size_n     = json_value(data, "speculative.ngram_size_n", defaults.speculative.ngram_size_n);

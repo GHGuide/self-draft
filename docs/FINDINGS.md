@@ -96,7 +96,35 @@ CPU flash-attn path adds cost on small attention. The knobs are kept as OPTIONAL
 but they are NOT the default - the simple MTP path at n-max=3 is faster for typical
 agentic/coding generations. Lesson: match the optimization to the context length.
 
-## Takeaway
+## 8. Adaptive draft-length (online n-max) loses over HTTP - needs an in-loop controller
+We patched llama.cpp to enable per-request `speculative.n_max` (it ships `#if 0`'d out;
+3-file change: server-task parse, server-context `get_n_draft_max` clamp, MTP loop honoring
+the per-call ceiling). Verified live: n_max=1 -> draft_n=61 accept 95%; n_max=8 -> draft_n=184
+accept 52%. We then built an EMA controller (`sd.py adaptive`) that varies n_max per chunk
+from rolling acceptance. On a mixed code+prose+JSON workload (where a static n is wrong for
+half the run):
+
+| | tok/s |
+|---|---|
+| best static (n-max=3) | 24.87 |
+| adaptive (EMA controller) | 15.83 (0.64x) |
+
+Adaptive LOST by 36%. Two reasons: (1) the controller lags at acceptance-region boundaries
+(it raised n right as a region went cold); (2) more fundamentally, an HTTP-chunked
+controller pays per-request overhead (15 requests vs static's 1) that swamps any gain. The
+literature's +5-15% assumes the controller runs INSIDE the decode loop with zero request
+overhead. Doing it right requires an in-server C++ controller (adjust slot n_max per step) -
+a large change with modest, workload-specific upside; not worth it given the pattern below.
+The per-request-n_max patch itself is a real, working capability (kept in `patches/`).
+
+## Takeaway: five measured negative/null results, one robust win
+We systematically tried to beat the simple MTP self-draft (static n-max=3, ~2.0x on Arm64):
+same-size Q2 draft (slower), early-exit layer-subset draft (4-10x slower), MTP+n-gram
+cascade (wash on Arm), flash-attn + q8_0 KV-cache (slower at short ctx), and adaptive n-max
+(slower over HTTP). None beat it. The lesson: on this stack the cheap, shipped MTP head with
+a tuned static draft length is at the throughput ceiling for short agentic/coding workloads;
+the extra machinery costs more than it saves. The winning recipe stays simple - and we have
+the data to prove the simple thing is right.
 On Arm64 cloud, the winning recipe is: a draft that is *actually cheap* (MTP head, shipped
 free with the model) + per-instance draft-length autotuning + honest latency/cost metrics,
 stacked on Arm's KleidiAI kernels. One flag, no extra download. We also showed, with data,

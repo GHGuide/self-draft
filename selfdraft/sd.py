@@ -131,12 +131,13 @@ class Server:
         if getattr(self, "log", None):
             self.log.close()
 
-    def complete(self, prompt, n_predict, temperature=0.0, top_k=1):
-        body = json.dumps({"prompt": prompt, "n_predict": n_predict,
-                           "temperature": temperature, "top_k": top_k,
-                           "cache_prompt": False}).encode()
-        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/completion", body,
-                                     {"Content-Type": "application/json"})
+    def complete(self, prompt, n_predict, temperature=0.0, top_k=1, n_max=None, cache_prompt=False):
+        body = {"prompt": prompt, "n_predict": n_predict, "temperature": temperature,
+                "top_k": top_k, "cache_prompt": cache_prompt}
+        if n_max is not None:
+            body["speculative.n_max"] = n_max   # per-request draft length (needs the server patch)
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/completion",
+                                     json.dumps(body).encode(), {"Content-Type": "application/json"})
         return json.load(urllib.request.urlopen(req, timeout=900))
 
 # --- prompts (a reasoning/code prompt is the speculative-friendly default) ---
@@ -145,6 +146,12 @@ PROMPTS = {
             "number using memoization. Then explain step by step how it works and give the time "
             "complexity.<end_of_turn>\n<start_of_turn>model\n",
     "prose": "<start_of_turn>user\nExplain why the sky is blue.<end_of_turn>\n<start_of_turn>model\n",
+    # mixed: alternates high-acceptance (code/structured) and low-acceptance (free prose)
+    # regions -> a static n-max is wrong for half the run; this is where adaptive wins.
+    "mixed": "<start_of_turn>user\nFirst write a Python function fib(n) using memoization. "
+             "Then write a short, original, free-flowing motivational paragraph about persistence "
+             "(no code). Then give a JSON object {\"name\":..., \"complexity\":...} for the function."
+             "<end_of_turn>\n<start_of_turn>model\n",
 }
 
 def gen_metrics(r):
@@ -249,6 +256,52 @@ def do_run(args):
     print("[self-draft] launching:\n  " + " ".join(cmd))
     os.execv(binary, cmd)
 
+def run_adaptive(srv, prompt, total_n, n_cap, chunk=24, beta=0.5):
+    """Online adaptive draft-length controller (GammaTune-style EMA). Issues chunked
+    completions reusing KV (cache_prompt), reads per-chunk acceptance, and steers the
+    per-request n_max: high acceptance -> draft longer, low acceptance -> draft shorter.
+    Lossless: only changes HOW MANY tokens are proposed; the target verifies every one."""
+    text, n_max, ema = "", 3, None
+    tok, ms, traj = 0, 0.0, []
+    while tok < total_n:
+        r = srv.complete(prompt + text, min(chunk, total_n - tok), n_max=n_max, cache_prompt=True)
+        t = r["timings"]; text += r["content"]
+        tok += t["predicted_n"]; ms += t["predicted_ms"]
+        a = (t["draft_n_accepted"] / t["draft_n"]) if t.get("draft_n") else 0.0
+        ema = a if ema is None else (1 - beta) * ema + beta * a
+        traj.append((n_max, round(a, 2)))
+        # proportional controller: optimal draft length grows with acceptance
+        n_max = max(1, min(n_cap, round(1 + 0.7 * ema / (1 - min(ema, 0.92)))))
+    return {"tok_s": tok / (ms / 1000.0) if ms else 0, "tokens": tok, "n_max_traj": traj}
+
+def do_adaptive(args):
+    binary = find_server()
+    mtp = pick_draft(args)
+    prompt = PROMPTS.get(args.workload, args.workload)
+    n_cap = args.n_cap
+    print(f"[self-draft] adaptive n-max vs static-best (n_cap={n_cap}, workload={args.workload})")
+    # one server launched at n_cap; per-request n_max selects the effective draft length
+    with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads,
+                ctx=args.ctx, mtp=mtp, n_max=n_cap, p_min=args.p_min, spec_type=args.methods,
+                **perf_kwargs(args)) as s:
+        # static sweep on the SAME server (per-request n_max)
+        static = {}
+        for k in [int(x) for x in args.grid.split(",")]:
+            r = s.complete(prompt, args.n_predict, n_max=k)
+            static[k] = r["timings"]["predicted_per_second"]
+            print(f"  static n-max={k}: {static[k]:.2f} tok/s")
+        best_k = max(static, key=static.get)
+        # adaptive
+        ad = run_adaptive(s, prompt, args.n_predict, n_cap, chunk=args.chunk)
+    sp = ad["tok_s"] / static[best_k]
+    print(f"\nbest static : n-max={best_k}  {static[best_k]:.2f} tok/s")
+    print(f"ADAPTIVE    : {ad['tok_s']:.2f} tok/s  ({sp:.2f}x vs best static)")
+    print(f"  n-max trajectory (n,accept): {ad['n_max_traj']}")
+    if args.json:
+        json.dump({"static": static, "best_static_k": best_k, "best_static_tok_s": static[best_k],
+                   "adaptive_tok_s": ad["tok_s"], "adaptive_vs_static": sp,
+                   "n_max_traj": ad["n_max_traj"]}, open(args.json, "w"), indent=2)
+
 def do_agent(args):
     from agent_demo import run_agent
     binary = find_server()
@@ -301,6 +354,11 @@ def main():
     r = sub.add_parser("run"); common(r); r.add_argument("--n-max", type=int, default=3); r.set_defaults(fn=do_run)
     g = sub.add_parser("agent"); common(g); g.add_argument("--n-max", type=int, default=3)
     g.add_argument("-v", "--verbose", action="store_true"); g.set_defaults(fn=do_agent)
+    ad = sub.add_parser("adaptive"); common(ad)
+    ad.add_argument("--n-cap", type=int, default=8, help="max draft length the controller may use")
+    ad.add_argument("--chunk", type=int, default=24, help="tokens per control step")
+    ad.add_argument("--grid", default="1,2,3,4,6", help="static n-max values to compare against")
+    ad.set_defaults(fn=do_adaptive)
     args = ap.parse_args()
     args.fn(args)
 

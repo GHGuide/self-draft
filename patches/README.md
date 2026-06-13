@@ -24,6 +24,17 @@ cmake --build build -j --target llama-server llama-cli
 # log: "self-draft: using local MTP head 'mtp-gemma-4-12b-it.gguf'"
 ```
 
+## `llama.cpp-per-request-nmax.patch` (optional, for `sd.py adaptive`)
+Enables per-request `speculative.n_max` (upstream ships it `#if 0`'d out). 3-file change:
+`tools/server/server-task.cpp` (parse the per-request value), `tools/server/server-context.cpp`
+(`get_n_draft_max` honors it), `common/speculative.cpp` (MTP loop stops at the per-call
+ceiling). Lets a client vary draft length online without restarting the server. Verified:
+`speculative.n_max=1` -> draft_n 61 / 95% accept; `=8` -> 184 / 52%. Apply:
+`cd llama.cpp && git apply ../patches/llama.cpp-per-request-nmax.patch && cmake --build build -j --target llama-server`.
+Note: our EMA controller built on this (`sd.py adaptive`) does NOT beat a tuned static n-max
+over HTTP (chunking overhead) - see docs/FINDINGS.md §8. The patch is a real capability; the
+adaptive win needs an in-server controller, not HTTP chunks.
+
 ## Upstreaming note (read before submitting)
 llama.cpp's `AGENTS.md`/`CONTRIBUTING.md` state the project does **not** accept
 fully/predominantly AI-generated PRs, and that automated agents must not open PRs.
