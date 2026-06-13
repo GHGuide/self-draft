@@ -65,6 +65,12 @@ n-max=3 -> **1.54x** decode (vanilla 18.6 -> 28.6 tok/s, 81% accept), latency 1.
 ~23% lower $/token. **Self-draft helps *more* on the weaker, more memory-bound Arm cloud
 cores** - exactly where it matters for cost.
 
+**Multi-method (`--methods draft-mtp,ngram-mod`):** self-draft can *compose* speculation
+methods (MTP + n-gram cascade). Honest result: it helps on some laptop workloads (M4 code:
+1.85x vs 1.51x MTP-alone) but is **a wash on the Arm64 runner** (2.02x vs 2.00x) - MTP
+already saturates the win on memory-bound Arm cores. Kept as a tunable option, not the
+headline. n-gram *alone* is mediocre/harmful; the win, when present, is the composition.
+
 **Agent loop** (`sd.py agent`, ReAct + calculator tool, correct answer both): end-to-end
 win on agentic workloads (short per-step generations are TTFT-bound; the decode win
 dominates on longer outputs).
