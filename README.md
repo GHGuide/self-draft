@@ -95,6 +95,13 @@ bash scripts/graviton.sh 0.145    # provision deps, build llama.cpp +KleidiAI, f
 `--ngl 0` is the native CPU path on Graviton; KleidiAI accelerates the Q4_0 quant via
 Arm i8mm/dotprod. The autotuner adapts the draft length to the instance core count.
 
+**Free Arm64-cloud run (no instance, no credit card):**
+[`.github/workflows/arm-bench.yml`](.github/workflows/arm-bench.yml) runs the whole
+benchmark on a GitHub-hosted `ubuntu-24.04-arm` runner (free for public repos) - build
+with KleidiAI, fetch model + MTP, autotune, bench - and uploads the results JSON as an
+artifact. Trigger it from the repo's **Actions** tab ("Run workflow"). This is also the
+reproducible CI/DX artifact for the submission.
+
 ## Honest notes (read these)
 
 - **Distributionally lossless, not bit-identical.** The full model verifies every drafted

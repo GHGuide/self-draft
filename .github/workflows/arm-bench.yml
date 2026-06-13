@@ -1,0 +1,57 @@
+name: arm64-cloud-benchmark
+# Free Arm64-cloud benchmark: runs on GitHub-hosted Arm runners (free for public repos,
+# no credit card). Builds llama.cpp with Arm KleidiAI kernels, fetches Gemma 4 + its MTP
+# head, and benchmarks self-draft. Doubles as a reproducible production CI workflow.
+on:
+  workflow_dispatch: {}        # run manually from the Actions tab
+  push:
+    branches: [ main ]
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04-arm  # free Arm64 (aarch64) runner for public repositories
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Arm host
+        run: |
+          uname -m              # aarch64
+          nproc; free -h; df -h /
+
+      - name: Install deps
+        run: sudo apt-get update -y && sudo apt-get install -y build-essential cmake git python3 libcurl4-openssl-dev
+
+      - name: Build llama.cpp with KleidiAI (Arm Neoverse i8mm/SVE2)
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
+          cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_CPU_KLEIDIAI=ON -DGGML_NATIVE=ON
+          cmake --build llama.cpp/build -j"$(nproc)" --target llama-server
+
+      - name: Fetch Gemma 4 12B (Q4_0, KleidiAI-accelerated) + MTP head
+        run: |
+          mkdir -p models
+          base="https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main"
+          curl -fL -o models/gemma-4-12b-it-Q4_0.gguf "$base/gemma-4-12b-it-Q4_0.gguf"
+          curl -fL -o models/mtp-gemma-4-12b-it.gguf  "$base/mtp-gemma-4-12b-it.gguf"
+          ls -lh models
+
+      - name: Autotune draft length (Arm64 CPU)
+        run: |
+          python3 selfdraft/sd.py autotune models/gemma-4-12b-it-Q4_0.gguf \
+            --ngl 0 --threads "$(nproc)" --grid 1,2,3,4 --workload code --n-predict 160 \
+            --json bench_autotune.json
+
+      - name: Bench self-draft + cost ($/1M tok)
+        run: |
+          python3 selfdraft/sd.py bench models/gemma-4-12b-it-Q4_0.gguf \
+            --ngl 0 --threads "$(nproc)" --n-max 3 --workload code --n-predict 200 \
+            --price 0.0 --json bench_result.json
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-bench-results
+          path: |
+            bench_autotune.json
+            bench_result.json
