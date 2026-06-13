@@ -114,11 +114,19 @@ PROMPTS = {
 
 def gen_metrics(r):
     t = r["timings"]
-    m = {"tok_s": t["predicted_per_second"], "n": t["predicted_n"]}
+    m = {"tok_s": t["predicted_per_second"], "n": t["predicted_n"],
+         "ttft_ms": t.get("prompt_ms"),                          # time to first token
+         "latency_ms": (t.get("prompt_ms", 0) + t.get("predicted_ms", 0))}  # end-to-end
     if t.get("draft_n"):
         m["accept_pct"] = 100.0 * t["draft_n_accepted"] / t["draft_n"]
         m["draft_n"] = t["draft_n"]
     return m
+
+def cost_per_mtok(tok_s, price_per_hr):
+    # $ per 1M output tokens = ($/hr) / (tokens/hr) * 1e6
+    if not price_per_hr or not tok_s:
+        return None
+    return price_per_hr / (tok_s * 3600.0) * 1e6
 
 def equivalence(a, b):
     """Honest equivalence report between two generations (text)."""
@@ -150,16 +158,25 @@ def do_bench(args):
 
     eq = equivalence(v["content"], d["content"])
     speedup = dm["tok_s"] / vm["tok_s"]
-    print("\n================ self-draft bench ================")
-    print(f"vanilla    : {vm['tok_s']:6.2f} tok/s  (n={vm['n']})")
-    print(f"self-draft : {dm['tok_s']:6.2f} tok/s  (n={dm['n']}, accept={dm.get('accept_pct',0):.1f}%, n-max={args.n_max})")
-    print(f"SPEEDUP    : {speedup:.2f}x")
+    print("\n================ self-draft bench (Arm64 cloud) ================")
+    print(f"{'':12} {'tok/s':>8} {'TTFT ms':>9} {'latency ms':>11}")
+    print(f"vanilla    : {vm['tok_s']:8.2f} {vm['ttft_ms']:9.1f} {vm['latency_ms']:11.1f}")
+    print(f"self-draft : {dm['tok_s']:8.2f} {dm['ttft_ms']:9.1f} {dm['latency_ms']:11.1f}   "
+          f"(accept {dm.get('accept_pct',0):.1f}%, n-max={args.n_max})")
+    print(f"DECODE SPEEDUP : {speedup:.2f}x   |   LATENCY: {vm['latency_ms']/dm['latency_ms']:.2f}x lower")
+    if args.price:
+        cv, cd = cost_per_mtok(vm["tok_s"], args.price), cost_per_mtok(dm["tok_s"], args.price)
+        print(f"COST @ ${args.price}/hr : vanilla ${cv:.3f}/1M tok  ->  self-draft ${cd:.3f}/1M tok  "
+              f"({(1-cd/cv)*100:.0f}% cheaper)")
     print("--- output equivalence (distributional, not bit-exact) ---")
-    print(f"exact byte-identical : {eq['identical']}")
-    print(f"similarity           : {eq['similarity']*100:.2f}%  (common prefix {eq['common_prefix_chars']}/{eq['len_a']} chars)")
-    print("==================================================")
+    print(f"exact byte-identical : {eq['identical']}  | similarity {eq['similarity']*100:.2f}% "
+          f"(common prefix {eq['common_prefix_chars']}/{eq['len_a']} chars)")
+    print("===============================================================")
     if args.json:
-        json.dump({"vanilla": vm, "self_draft": dm, "speedup": speedup, "equivalence": eq},
+        json.dump({"vanilla": vm, "self_draft": dm, "speedup": speedup, "equivalence": eq,
+                   "price_per_hr": args.price,
+                   "cost_per_mtok": {"vanilla": cost_per_mtok(vm["tok_s"], args.price),
+                                     "self_draft": cost_per_mtok(dm["tok_s"], args.price)}},
                   open(args.json, "w"), indent=2)
         print(f"[self-draft] wrote {args.json}")
 
@@ -197,6 +214,26 @@ def do_run(args):
     print("[self-draft] launching:\n  " + " ".join(cmd))
     os.execv(binary, cmd)
 
+def do_agent(args):
+    from agent_demo import run_agent
+    binary = find_server()
+    mtp = resolve_mtp(args.model, args.mtp)
+    print(f"[self-draft] agent end-to-end latency: vanilla vs self-draft (n-max={args.n_max})")
+    with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads, ctx=args.ctx):
+        v = run_agent(args.port, verbose=args.verbose)
+    with Server(binary, args.model, port=args.port, ngl=args.ngl, threads=args.threads, ctx=args.ctx,
+                mtp=mtp, n_max=args.n_max, p_min=args.p_min):
+        d = run_agent(args.port, verbose=args.verbose)
+    print("\n============ agent loop (ReAct + calculator tool) ============")
+    print(f"vanilla    : {v['wall_ms']/1000:6.2f}s  steps={v['steps']} tokens={v['tokens']} answer={v['answer']} correct={v['correct']}")
+    print(f"self-draft : {d['wall_ms']/1000:6.2f}s  steps={d['steps']} tokens={d['tokens']} answer={d['answer']} correct={d['correct']}")
+    if d["wall_ms"]:
+        print(f"END-TO-END AGENT SPEEDUP : {v['wall_ms']/d['wall_ms']:.2f}x faster")
+    print("==============================================================")
+    if args.json:
+        json.dump({"vanilla": v, "self_draft": d, "speedup": v["wall_ms"]/d["wall_ms"]},
+                  open(args.json, "w"), indent=2)
+
 def main():
     ap = argparse.ArgumentParser(prog="self-draft", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -211,10 +248,13 @@ def main():
         p.add_argument("--p-min", type=float, default=0.0)
         p.add_argument("--workload", default="code", help="'code', 'prose', or a literal prompt string")
         p.add_argument("--n-predict", type=int, default=200)
+        p.add_argument("--price", type=float, default=0.0, help="instance price $/hr (e.g. c7g.xlarge ~0.145) -> reports $/1M tokens")
         p.add_argument("--json", help="write metrics JSON here")
     b = sub.add_parser("bench"); common(b); b.add_argument("--n-max", type=int, default=3); b.set_defaults(fn=do_bench)
     a = sub.add_parser("autotune"); common(a); a.add_argument("--grid", default="1,2,3,4,6,8"); a.set_defaults(fn=do_autotune)
     r = sub.add_parser("run"); common(r); r.add_argument("--n-max", type=int, default=3); r.set_defaults(fn=do_run)
+    g = sub.add_parser("agent"); common(g); g.add_argument("--n-max", type=int, default=3)
+    g.add_argument("-v", "--verbose", action="store_true"); g.set_defaults(fn=do_agent)
     args = ap.parse_args()
     args.fn(args)
 

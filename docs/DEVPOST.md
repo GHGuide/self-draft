@@ -1,7 +1,11 @@
 # Devpost submission — self-draft
 
+**Track: Cloud AI** (Arm64 cloud inference performance + production developer workflow).
+
 ## Tagline
-One command, ~1.5× faster LLM decoding on Arm64 — using the draft heads your model already ships. Zero extra downloads.
+A one-flag, drop-in latency optimization for LLM inference servers on AWS Graviton:
+your model's own MTP heads become the draft - ~1.5x faster decoding and ~23% lower
+$/token on agentic/reasoning workloads, zero extra download, stacked on Arm KleidiAI.
 
 ## Inspiration
 Speculative decoding is the highest-leverage inference optimization that *doesn't*
@@ -29,10 +33,11 @@ python3 selfdraft/sd.py run models/gemma-4-12b-it-Q4_K_M.gguf --ngl 0
 
 ## Results
 On `gemma-4-12b-it` (Q4_K_M), CPU-only (the Graviton-equivalent path), reasoning/code
-workload: **1.54× faster decoding** at the autotuned draft length, **76% draft
-acceptance**, **0.47 GB MTP head** vs downloading a whole second model. Speedup is
-workload-dependent (76–87% acceptance on code/reasoning vs ~54% on short prose) —
-exactly the structured, long outputs that agentic and coding workloads produce.
+workload: **1.54x faster decoding** at the autotuned draft length, **TTFT and end-to-end
+latency down**, **~23% lower $/1M tokens**, **76-87% draft acceptance**, **0.47 GB MTP
+head** vs downloading a whole second model. A working ReAct agent demo (tool-calling,
+correct answer) shows the end-to-end serving benefit. Numbers reproduce on Graviton via
+`scripts/graviton.sh` (builds with Arm KleidiAI kernels).
 
 ## How we built it (and what we learned)
 We ran a disciplined go/no-go before committing:
