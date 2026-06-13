@@ -94,6 +94,11 @@ python3 selfdraft/sd.py run models/gemma-4-12b-it-Q4_K_M.gguf --ngl 0 --n-max 3
 Flags: `--ngl` GPU layers (**use 0 on Apple Silicon**), `--threads`, `--ctx`,
 `--workload code|prose|<literal prompt>`, `--n-predict`, `--n-max`, `--json out.json`.
 
+`sd.py` works with **stock** llama.cpp. Optionally, [`patches/`](patches/) adds a
+native one-flag `--self-draft` to llama.cpp itself
+(`llama-server -m model.gguf --self-draft`), which auto-resolves a local
+`mtp-*.gguf` sibling — see [patches/README.md](patches/README.md).
+
 ## Validate on AWS Graviton (Arm64)
 
 ```bash

@@ -1,0 +1,93 @@
+diff --git a/common/arg.cpp b/common/arg.cpp
+index 55795d3..9853650 100644
+--- a/common/arg.cpp
++++ b/common/arg.cpp
+@@ -26,6 +26,7 @@
+ #include <cinttypes>
+ #include <climits>
+ #include <cstdarg>
++#include <filesystem>
+ #include <fstream>
+ #include <list>
+ #include <regex>
+@@ -434,6 +435,42 @@ static bool parse_bool_value(const std::string & value) {
+ // CLI argument parsing functions
+ //
+ 
++// find a Multi-Token-Prediction draft sibling next to a local model file, e.g.
++// "mtp-<name>.gguf" or "<name>-MTP.gguf". Lets --self-draft work fully offline.
++static std::string common_find_local_mtp_sibling(const std::string & model_path) {
++    if (model_path.empty()) {
++        return "";
++    }
++    std::error_code ec;
++    std::filesystem::path dir = std::filesystem::path(model_path).parent_path();
++    if (dir.empty()) {
++        dir = std::filesystem::current_path(ec);
++    }
++    if (!std::filesystem::is_directory(dir, ec)) {
++        return "";
++    }
++    std::string best;
++    for (const auto & entry : std::filesystem::directory_iterator(dir, ec)) {
++        if (ec) {
++            break;
++        }
++        if (!entry.is_regular_file(ec)) {
++            continue;
++        }
++        const std::string fn = entry.path().filename().string();
++        if (fn.size() < 6 || fn.substr(fn.size() - 5) != ".gguf") {
++            continue;
++        }
++        if (fn.rfind("mtp-", 0) == 0 || fn.find("-MTP.") != std::string::npos) {
++            // prefer the shortest name: the dedicated head, not a full *-MTP model
++            if (best.empty() || fn.size() < std::filesystem::path(best).filename().string().size()) {
++                best = entry.path().string();
++            }
++        }
++    }
++    return best;
++}
++
+ bool common_params_handle_models(common_params & params, llama_example curr_ex) {
+     const bool spec_type_draft_mtp = std::find(params.speculative.types.begin(),
+                                          params.speculative.types.end(),
+@@ -476,6 +513,18 @@ bool common_params_handle_models(common_params & params, llama_example curr_ex)
+             params.speculative.draft.mparams.url.empty()) {
+             params.speculative.draft.mparams.path = res.mtp.path;
+         }
++        // local -m: resolve the MTP head sibling next to the model (zero download)
++        if (spec_type_draft_mtp &&
++            params.speculative.draft.mparams.path.empty() &&
++            params.speculative.draft.mparams.hf_repo.empty() &&
++            params.speculative.draft.mparams.url.empty() &&
++            !params.model.path.empty()) {
++            const std::string sib = common_find_local_mtp_sibling(params.model.path);
++            if (!sib.empty()) {
++                LOG_INF("%s: self-draft: using local MTP head '%s'\n", __func__, sib.c_str());
++                params.speculative.draft.mparams.path = sib;
++            }
++        }
+         common_params_handle_model(params.speculative.draft.mparams, sub_opts);
+         common_params_handle_model(params.vocoder.model,             sub_opts);
+         return true;
+@@ -3660,6 +3709,18 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+             params.speculative.types.insert(params.speculative.types.end(), types.begin(), types.end());
+         }
+     ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_SPEC_TYPE"));
++    add_opt(common_arg(
++        {"--self-draft"},
++        "zero-download self-speculative decoding: use the model's own Multi-Token Prediction "
++        "(MTP) heads as the draft. Enables draft-mtp and auto-resolves a local 'mtp-*.gguf' "
++        "sibling next to -m, so no separate draft model is needed.",
++        [](common_params & params) {
++            if (std::find(params.speculative.types.begin(), params.speculative.types.end(),
++                          COMMON_SPECULATIVE_TYPE_DRAFT_MTP) == params.speculative.types.end()) {
++                params.speculative.types.push_back(COMMON_SPECULATIVE_TYPE_DRAFT_MTP);
++            }
++        }
++    ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_SELF_DRAFT"));
+     add_opt(common_arg(
+         {"--spec-ngram-mod-n-min"}, "N",
+         string_format("minimum number of ngram tokens to use for ngram-based speculative decoding (default: %d)", params.speculative.ngram_mod.n_min),
