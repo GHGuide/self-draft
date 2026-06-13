@@ -1,0 +1,31 @@
+{
+  "vanilla": {
+    "tok_s": 5.743008576891673,
+    "n": 256,
+    "ttft_ms": 2701.832,
+    "latency_ms": 47277.771
+  },
+  "self_draft": {
+    "tok_s": 10.891330768736928,
+    "n": 256,
+    "ttft_ms": 2719.831,
+    "latency_ms": 26224.764000000003,
+    "accept_pct": 70.90163934426229,
+    "draft_n": 244
+  },
+  "speedup": 1.8964503749064079,
+  "equivalence": {
+    "identical": false,
+    "sha_a": "a32f469e488a",
+    "sha_b": "b989e0e38d3f",
+    "common_prefix_chars": 866,
+    "len_a": 887,
+    "len_b": 871,
+    "similarity": 0.9852
+  },
+  "price_per_hr": 0.0,
+  "cost_per_mtok": {
+    "vanilla": null,
+    "self_draft": null
+  }
+}

@@ -80,6 +80,22 @@ but useless. Salience-based layer selection cannot close a 0-27% acceptance gap;
 requires *training* a draft (which is exactly what MTP/Eagle/LayerSkip do, and what breaks
 "zero-download"). This is why self-draft uses the model's shipped, trained MTP heads.
 
+## 7. Memory-cache knobs (flash-attn + q8_0 KV) help only at LONG context - measured
+We exposed Arm memory-bound knobs (`--fa on --ctk/--ctv q8_0`, draft-KV-quant, `--mlock`)
+and A/B'd on the free Arm64 runner at our agentic/code context (n_predict=256, ctx 4096):
+
+| config | self-draft tok/s | speedup |
+|---|---|---|
+| MTP baseline | 12.15 | 2.01x |
+| MTP + flash-attn + q8_0 KV + mlock | 10.89 | 1.90x (-10%) |
+
+KV-cache quantization is a long-context optimization: at a few hundred tokens the KV cache
+is small, so the per-access q8_0 dequant overhead outweighs the bandwidth saving, and the
+CPU flash-attn path adds cost on small attention. The knobs are kept as OPTIONAL flags
+(they pay off when the verify step re-reads a large KV cache, i.e. long-context serving),
+but they are NOT the default - the simple MTP path at n-max=3 is faster for typical
+agentic/coding generations. Lesson: match the optimization to the context length.
+
 ## Takeaway
 On Arm64 cloud, the winning recipe is: a draft that is *actually cheap* (MTP head, shipped
 free with the model) + per-instance draft-length autotuning + honest latency/cost metrics,

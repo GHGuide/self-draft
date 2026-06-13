@@ -102,6 +102,11 @@ python3 selfdraft/sd.py run       models/...Q4_K_M.gguf --ngl 0 --n-max 3       
 `--ngl 0` = CPU (the native Graviton path; **required on Apple Silicon**, see below).
 Optional native one-flag: [`patches/`](patches/) adds `--self-draft` to llama.cpp itself.
 
+Long-context serving knobs (memory-bound): `--fa on --ctk q8_0 --ctv q8_0` (target KV-cache
+quant), `--ctkd/--ctvd q8_0` (draft KV-quant, correctness-safe), `--mlock`. They pay off
+when the verify step re-reads a large KV cache; at short generation lengths they add
+overhead (measured slower - see [docs/FINDINGS.md](docs/FINDINGS.md) §7), so they are off by default.
+
 ## Validate on AWS Graviton (Arm64)
 
 ```bash
