@@ -54,7 +54,35 @@ Speculative decoding trades extra compute for lower latency. It wins single-stre
 low-concurrency / latency-sensitive (agentic) serving; it does not raise max-batch
 throughput. We frame and benchmark it accordingly (TTFT, per-request latency, $/token).
 
+## 6. We tried to make it work WITHOUT MTP heads - and measured why it doesn't
+MTP only works on the handful of models that ship MTP heads. We attempted a universal,
+training-free alternative: derive a draft from the target's OWN layers (early-exit / layer
+subset) + its tied embedding head, verified losslessly by `draft-simple`. We built a GGUF
+surgery tool (`selfdraft/make_self_draft.py`) that slices the first K of N=48 Gemma-4-12B
+layers (copying quantized bytes verbatim, reslicing the per-layer `head_count_kv` and
+`sliding_window_pattern` arrays) and swept K (CPU, code workload):
+
+| K (of 48) | draft accept | speedup |
+|---|---|---|
+| 44 | 27.3% | 0.23x |
+| 40 | 15.6% | 0.14x |
+| 36 | 6.7%  | 0.10x |
+| 32 | 3.2%  | 0.12x |
+| 24 | 0.0%  | 0.14x |
+
+**Conclusion: training-free early-exit self-draft does not work on stock Gemma 4.** Even
+keeping 44/48 layers (skipping just 4), the draft matches the full model only 27% of the
+time - the model is not trained for early exit, so projecting an intermediate hidden state
+through the tied head gives near-random tokens. And a 44-layer draft is barely cheaper than
+the 48-layer target, so you pay near-full draft cost for almost no accepted tokens => 4-10x
+SLOWER. Output stays correct (draft-simple verifies; 92-100% similarity) - it is lossless
+but useless. Salience-based layer selection cannot close a 0-27% acceptance gap; the fix
+requires *training* a draft (which is exactly what MTP/Eagle/LayerSkip do, and what breaks
+"zero-download"). This is why self-draft uses the model's shipped, trained MTP heads.
+
 ## Takeaway
 On Arm64 cloud, the winning recipe is: a draft that is *actually cheap* (MTP head, shipped
 free with the model) + per-instance draft-length autotuning + honest latency/cost metrics,
-stacked on Arm's KleidiAI kernels. One flag, no extra download.
+stacked on Arm's KleidiAI kernels. One flag, no extra download. We also showed, with data,
+that the obvious training-free shortcuts (same-size Q2 draft; early-exit layer-subset draft)
+do NOT work - useful negative results for anyone optimizing inference on Arm.
