@@ -1,4 +1,16 @@
-# Demo video plan (≤3 min)
+# Demo video plan (<=3 min) — Arm Agent-Memory
+
+## HERO SHOT (lead with this)
+Split screen, same Arm64 box, a 4-agent workflow with RAM for only 2.
+- LEFT (naive): agent #3 resumes -> terminal hangs, a 13s (or 91s at long ctx) re-prefill counter ticks.
+- RIGHT (Agent-Memory): same agent resumes -> KV restored, **first token in ~0.5s**, decoding immediately.
+Caption: "Same model, same Arm CPU. Restoring the agent's KV vs recomputing it: 23-180x lower TTFT."
+Then flash the bit-exact check (two identical sha256) and the self-draft decode racing.
+
+---
+
+# (original self-draft plan below, reuse shots as needed)
+# Demo video plan (legacy)
 
 Goal: judge sees self-draft running on the target device (Arm64) and getting faster
 with zero extra download, honestly. No copyrighted material.
