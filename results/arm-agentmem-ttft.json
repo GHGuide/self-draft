@@ -1,0 +1,111 @@
+{
+  "naive": [
+    {
+      "agent": 0,
+      "ttft_ms": 15787.888,
+      "reproc": 804
+    },
+    {
+      "agent": 1,
+      "ttft_ms": 12705.102,
+      "reproc": 764
+    },
+    {
+      "agent": 2,
+      "ttft_ms": 12763.556,
+      "reproc": 750
+    },
+    {
+      "agent": 3,
+      "ttft_ms": 13590.574,
+      "reproc": 790
+    },
+    {
+      "agent": 0,
+      "ttft_ms": 13241.633,
+      "reproc": 790
+    },
+    {
+      "agent": 1,
+      "ttft_ms": 12049.924,
+      "reproc": 750
+    },
+    {
+      "agent": 2,
+      "ttft_ms": 11991.074,
+      "reproc": 750
+    },
+    {
+      "agent": 3,
+      "ttft_ms": 15214.312,
+      "reproc": 790
+    }
+  ],
+  "persistent": [
+    {
+      "agent": 0,
+      "warm": false,
+      "ttft_ms": 13787.173,
+      "reprocessed_n": 804,
+      "gen_tok_s": 24.612279681640164
+    },
+    {
+      "agent": 1,
+      "warm": false,
+      "ttft_ms": 11025.761,
+      "reprocessed_n": 764,
+      "gen_tok_s": 23.75434444690236
+    },
+    {
+      "agent": 2,
+      "warm": false,
+      "ttft_ms": 12027.928,
+      "reprocessed_n": 764,
+      "gen_tok_s": 21.539973478907655
+    },
+    {
+      "agent": 3,
+      "warm": false,
+      "ttft_ms": 14886.971,
+      "reprocessed_n": 804,
+      "gen_tok_s": 17.03615604693035
+    },
+    {
+      "agent": 0,
+      "warm": true,
+      "ttft_ms": 1240.544,
+      "reprocessed_n": 1,
+      "gen_tok_s": 4.119503713088925
+    },
+    {
+      "agent": 1,
+      "warm": true,
+      "ttft_ms": 846.292,
+      "reprocessed_n": 1,
+      "gen_tok_s": 17.890627882767188
+    },
+    {
+      "agent": 2,
+      "warm": true,
+      "ttft_ms": 83.741,
+      "reprocessed_n": 1,
+      "gen_tok_s": 20.509375989417162
+    },
+    {
+      "agent": 3,
+      "warm": true,
+      "ttft_ms": 80.804,
+      "reprocessed_n": 1,
+      "gen_tok_s": 9.877951732623602
+    }
+  ],
+  "naive_return_ttft_ms": 13124.23575,
+  "persistent_return_ttft_ms": 562.8452500000001,
+  "ttft_speedup": 23.317662803408215,
+  "config": {
+    "agents": 4,
+    "ram_slots": 2,
+    "rounds": 2,
+    "pad": 40
+  }
+}

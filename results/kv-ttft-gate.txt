@@ -1,0 +1,8 @@
+prompt tokens (cold prefill_n) : 4807
+COLD prefill TTFT  :  91042.8 ms  (4807 tokens)
+slot restore (disk):     98.9 ms  (file 414 MB)
+WARM prefill TTFT  :    399.1 ms  (reprocessed_n=1)
+effective warm TTFT (restore+warm prefill):    498.0 ms
+TTFT SPEEDUP (cold / (restore+warm)) : 182.8x
+GATE >=5x : PASS -> GO
+KV_GATE_DONE
