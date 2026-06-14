@@ -61,15 +61,17 @@ Built on stock llama.cpp primitives + a model-agnostic Python manager — drop-i
 serving stack.
 
 ## Install / run
+Run from an Arm64 box (Graviton, or any aarch64 Linux/macOS). All commands run from the repo root.
 ```bash
+git clone https://github.com/GHGuide/self-draft.git && cd self-draft   # this repo
 git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
 cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_CPU_KLEIDIAI=ON   # Arm i8mm/SVE2
 cmake --build llama.cpp/build -j --target llama-server
 hf download unsloth/gemma-4-12b-it-GGUF --include "gemma-4-12b-it-Q4_K_M.gguf" "mtp-gemma-4-12b-it.gguf" --local-dir models
 
-python3 bench/agent_memory_bench.py --agents 4 --ram-slots 2 --rounds 2 --json out.json   # TTFT win
-python3 bench/kv_equivalence.py        # prove bit-exact restore
-python3 selfdraft/sd.py bench models/gemma-4-12b-it-Q4_K_M.gguf --ngl 0 --n-max 3   # bundled 2x decode
+python3 bench/agent_memory_bench.py --agents 4 --ram-slots 2 --rounds 2 --json out.json   # the TTFT win
+python3 bench/kv_equivalence.py        # prove bit-exact restore (sha match)
+python3 selfdraft/sd.py bench models/gemma-4-12b-it-Q4_K_M.gguf --ngl 0 --n-max 3   # optional self-draft decode
 ```
 
 ## Validate on Arm64 (free, no credit card)
