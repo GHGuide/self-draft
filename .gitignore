@@ -1,10 +1,19 @@
 # heavy artifacts — never commit
 models/
 llama.cpp/
-bench/
 __pycache__/
 *.pyc
 .DS_Store
+# bench: track SCRIPTS, ignore run artifacts
+bench/*.log
+bench/*.json
+bench/*.out
+bench/*.err
+bench/*.csv
+bench/*.txt
+bench/out/
+bench/arm_ci*/
+bench/arm_perf/
 # internal hackathon strategy/log — keep out of public repo
 BRIEF.md
 CLAUDE.md
