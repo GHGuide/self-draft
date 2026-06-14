@@ -1,0 +1,5 @@
+      KV (k/v)   slot MB  tokens  agents/16GB
+       f16/f16       354    1131           45   (1.0x more agents vs f16)
+     q8_0/q8_0       188    1131           85   (1.9x more agents vs f16)
+     q4_0/q4_0       100    1131          160   (3.6x more agents vs f16)
+KV_DENSITY_DONE

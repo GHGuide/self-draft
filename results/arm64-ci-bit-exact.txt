@@ -1,0 +1,4 @@
+reference (no evict) sha: 9eddc1cfaf978555
+restore mid-stream  sha: 9eddc1cfaf978555
+BYTE-IDENTICAL: YES - KV restore is bit-exact (lossless recovered)
+KV_EQ_DONE

@@ -26,7 +26,7 @@ def agent_prompt(aid, pad):
     return (f"<start_of_turn>user\n{ctx}\nGiven your role, state your single top priority "
             f"this sprint in one short sentence.<end_of_turn>\n<start_of_turn>model\n")
 
-def launch_server(model, port, n_slots, ctx, slot_dir, cache_ram=0):
+def launch_server(model, port, n_slots, ctx, slot_dir, cache_ram=0, self_draft=False):
     # cache_ram=0 disables llama.cpp's in-RAM prompt cache, isolating the paper's regime:
     # RAM too small to hold every agent's KV -> the ONLY way to avoid re-prefill is our
     # disk save/restore. (With the default 8GB RAM cache, the server already reuses KV
@@ -34,11 +34,13 @@ def launch_server(model, port, n_slots, ctx, slot_dir, cache_ram=0):
     # or across server restarts.)
     bin = os.path.join(ROOT, "llama.cpp/build/bin/llama-server")
     log = open(os.path.join(ROOT, "bench", f"agentmem_srv_{port}.log"), "w")
-    p = subprocess.Popen([bin, "-m", model, "-ngl", "0", "-t", "8", "-c", str(ctx),
+    cmd = [bin, "-m", model, "-ngl", "0", "-t", "8", "-c", str(ctx),
         "--swa-full", "--slot-save-path", slot_dir, "-np", str(n_slots),
-        "--cache-ram", str(cache_ram),
-        "--port", str(port), "--host", "127.0.0.1"], stdout=log, stderr=subprocess.STDOUT,
-        preexec_fn=os.setsid)
+        "--cache-ram", str(cache_ram), "--port", str(port), "--host", "127.0.0.1"]
+    if self_draft:   # bundle the MTP self-draft decode layer
+        mtp = os.path.join(os.path.dirname(model), "mtp-gemma-4-12b-it.gguf")
+        cmd += ["-md", mtp, "--spec-type", "draft-mtp", "--spec-draft-n-max", "3", "--spec-draft-p-min", "0"]
+    p = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, preexec_fn=os.setsid)
     for _ in range(120):
         try:
             if json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2)).get("status") == "ok":
@@ -81,10 +83,10 @@ def main():
 
     # ---- PERSISTENT: our manager saves+restores KV across evictions ----
     os.system(f"rm -f {slot_dir}/agent_*.bin")
-    p = launch_server(a.model, a.port, a.ram_slots, a.ctx, slot_dir)
+    p = launch_server(a.model, a.port, a.ram_slots, a.ctx, slot_dir, self_draft=a.self_draft)
     mem = AgentMemory(a.port, a.ram_slots, slot_dir)
     for aid in order:
-        mem.turn(aid, prompts[aid], n_predict=a.n_predict)
+        mem.turn(aid, prompts[aid], n_predict=a.n_predict, self_draft_n_max=(3 if a.self_draft else None))
     kill(p)
     persistent = mem.stats
 
@@ -100,6 +102,10 @@ def main():
         print(f"{i:>4} {nv['agent']:>5} | {nv['ttft_ms']:>9.0f}ms {nv['reproc']:>7} | {ps['ttft_ms']:>11.0f}ms {str(ps['warm']):>5}")
     print(f"\nRETURNING-turn avg TTFT:  naive {n_ttft:.0f} ms  ->  persistent {p_ttft:.0f} ms"
           f"  ({n_ttft/max(p_ttft,0.01):.1f}x lower)")
+    gts = [x["gen_tok_s"] for x in persistent if x.get("gen_tok_s")]
+    if gts:
+        print(f"persistent decode: {sum(gts)/len(gts):.1f} tok/s avg"
+              + ("  (self-draft bundled)" if a.self_draft else "  (no draft)"))
     if a.json:
         json.dump({"naive": naive, "persistent": persistent,
                    "naive_return_ttft_ms": n_ttft, "persistent_return_ttft_ms": p_ttft,

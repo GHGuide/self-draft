@@ -2,8 +2,9 @@
 
 **When device RAM can't hold every agent's KV cache, returning agents pay a full re-prefill
 — 13–91 s per turn on an Arm CPU. Agent-Memory persists each agent's KV to disk and restores
-it instead: ~23–180× lower TTFT, bit-identical output, 4× more agents per GB. Plus a bundled
-self-draft 2× decode. One server, one Arm64 box, reproducible on free CI.**
+it instead: **up to 500× lower TTFT** (measured on a free Arm64 CI runner), **bit-identical**
+output, up to 3.6× more agents per GB — with an optional self-draft decode layer on top.
+One server, one Arm64 box, reproducible on free CI.**
 
 > **Arm Create: AI Optimization Challenge — Cloud AI track.** Target: AWS Graviton / Arm64
 > multi-agent inference serving. Validated free on GitHub `ubuntu-24.04-arm` runners.
@@ -31,20 +32,27 @@ python3 bench/agent_memory_bench.py --agents 4 --ram-slots 2 --rounds 2   # see 
 
 **TTFT — returning agent (the win):**
 
-| | cold re-prefill (naive) | restore (Agent-Memory) | speedup |
+| environment | cold re-prefill (naive) | restore (Agent-Memory) | speedup |
 |---|---|---|---|
-| 4.8K-token agent ctx | 91,043 ms | 498 ms | **182×** |
-| multi-agent, RAM-constrained (avg) | 13,124 ms | 563 ms | **23×** |
+| **free GitHub Arm64 CI** (multi-agent, RAM-constrained) | **111,441 ms** | **223 ms** | **500×** |
+| Apple M4 CPU (single 4.8K-token ctx) | 91,043 ms | 498 ms | 182× |
+| Apple M4 CPU (multi-agent, RAM-constrained) | 13,124 ms | 563 ms | 23× |
+
+(Numbers scale with how slow the cold prefill is — the bandwidth-starved Arm64 cloud CPU is
+exactly where avoiding re-prefill wins hardest.)
 
 **Bit-exact:** restoring a mid-stream KV produces output **byte-identical** to a never-evicted
 agent (sha verified) — unlike speculative decoding, this is *exactly* lossless.
 
-**Density:** persisting KV at q8_0/q4 (`--cache-type-k/v`) shrinks each slot file ~2–4× → **more
-agents per GB of RAM**.
+**Density (measured):** persisting KV quantized shrinks each slot file — f16 354 MB →
+**q8_0 188 MB (1.9× more agents, near-lossless KV)** → **q4_0 100 MB (3.6×)** for the same
+context. More agents fit a fixed RAM/disk budget.
 
-**Bundled decode:** `--self-draft` (the model's own MTP heads as a zero-download speculative
-draft) adds **~2.0× decode throughput** on top — verified on the free Arm64 CI (see below).
-So each agent gets *both* near-instant warm TTFT *and* faster decode.
+**Optional self-draft decode:** `--self-draft` (the model's own MTP heads as a zero-download
+draft) **coexists** with persistent KV — verified: each agent keeps near-instant warm TTFT
+*and* gets speculative decode. The decode gain is the standalone **~1.86× on the Arm CI**
+(longer reasoning/code generations); on very short agent turns it is modest (~1.1×, draft
+overhead isn't amortized). Honest: it's a compatible bonus, not the headline.
 
 ## Why this fits Cloud AI
 Hits the rubric's named values head-on: **agents**, **inference-server speed (TTFT/latency)**,
