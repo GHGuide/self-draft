@@ -70,6 +70,15 @@ jobs:
             --fa on --ctk q8_0 --ctv q8_0 --ctkd q8_0 --ctvd q8_0 --mlock \
             --ctx 4096 --workload code --n-predict 256 --price 0.0 --json bench_perf.json
 
+      - name: Agent-Memory - multi-agent TTFT (persistent KV vs naive re-prefill, RAM-constrained)
+        run: |
+          python3 bench/agent_memory_bench.py --model models/gemma-4-12b-it-Q4_0.gguf \
+            --agents 4 --ram-slots 2 --rounds 2 --pad 60 --n-predict 16 --json agentmem.json
+
+      - name: Agent-Memory - KV restore is bit-exact
+        run: |
+          python3 bench/kv_equivalence.py models/gemma-4-12b-it-Q4_0.gguf | tee kv_equiv.txt
+
       - name: Summarize MTP-baseline vs MTP+perf
         run: |
           python3 - <<'PY'
@@ -88,3 +97,5 @@ jobs:
             bench_autotune.json
             bench_mtp.json
             bench_perf.json
+            agentmem.json
+            kv_equiv.txt
